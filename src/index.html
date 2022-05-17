@@ -1,0 +1,992 @@
+﻿<html class="fix">
+<head>
+<meta name="HandheldFriendly" content="true" />
+<meta name="viewport" content="width=device-width, height=device-height, user-scalable=no" />
+
+<title>Bellataire</title>
+
+<style type="text/css">
+
+* {
+    font-family: "Roboto", sans-serif;
+}
+
+body {
+    background-image: url("./tile.png");
+}
+
+html, body, #content, #scoreBar, #scoreDiv, #timeDiv, .cardSized, .cardSized div, #won {
+    position: absolute;
+    overflow: hidden;
+    padding: 0;
+    margin: 0;
+}
+
+html, body, #content, #scoreBar, #won {
+    left: 0;
+    right: 0;
+}
+
+html, body, #content, #scoreDiv, #timeDiv, #won {
+    top: 0;
+}
+
+html, body, #scoreBar, #scoreDiv, #timeDiv, #won {
+    bottom: 0;
+}
+
+#won {
+    z-index: 10000;
+    background-color: rgba(0, 0, 0, 0.5);
+    color: white;
+    font-size: 1.5em;
+    text-shadow: 0 0 0.3em #00ffff;
+    display: none;
+}
+
+#won div { text-align: center; }
+
+#content { bottom: 1.2em; }
+#scoreBar { height: 1.2em; background-color: ddd; }
+
+#scoreDiv, #timeDiv { width: 10em; line-height: 1.2em; text-shadow: 0 0 0.3em #404040; }
+
+#timeDiv { right: 10em; }
+#scoreDiv { right: 0; }
+
+.cardSized { background-size: contain; }
+
+.emptyStack { background-image: url("./base.png"); }
+.recycle { background-image: url("./recycle.png"); }
+.blocked { background-image: url("./blocked.png"); }
+
+.cardSized div { width: 100%; height: 100%; background-size: contain; }
+.cardSized div.selection { opacity: 0.25; background-color: blue; }
+.cardSized div.back { background-image: url("./back.png"); }
+
+#undo, #allup {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: 50%;
+}
+
+#undo {
+    top: 0;
+}
+
+#allup {
+    top: 50%;
+}
+
+</style>
+</head>
+<body>
+
+<div id="won"></div>
+
+<div id="content">
+  <div id="buttons" class="cardSized">
+    <input type="button" id="undo" value="Undo">
+    <input type="button" id="allup" value="All Up">
+  </div>
+</div>
+
+<div id="scoreBar">
+  <div id="timeDiv">Time: <span id="time"></span></div>
+  <div id="scoreDiv">Score: <span id="score"></span></div>
+</div>
+
+<script type="text/javascript" src="jquery-1.8.3.min.js"></script>
+<script type="text/javascript" src="game.js"></script>
+
+<script type="text/javascript"><!--
+
+var CARD_HEIGHT = 1.0;
+var CARD_WIDTH = CARD_HEIGHT * 71.0 / 96.0;
+var TABLEAU_BOTTOM_STACK_PEEK = CARD_HEIGHT / 32.0;
+var TABLEAU_TOP_STACK_PEEK = CARD_HEIGHT * 5.0 / 32.0;
+var STOCK_STACK_PEEK = CARD_HEIGHT / 96.0;
+var VERTICAL_SPACING = CARD_HEIGHT * 5.0 / 96.0;
+var MINIMUM_HORIZONTAL_SPACING = CARD_WIDTH * 11.0 / 71.0;
+var HALF_VERTICAL_SPACING = VERTICAL_SPACING * 0.5;
+
+var STOCK_TOP = VERTICAL_SPACING;
+var WASTE_TOP = VERTICAL_SPACING;
+var FOUNDATION_TOP = VERTICAL_SPACING;
+var TABLEAU_BOTTOM_TOP = STOCK_TOP + CARD_HEIGHT + STOCK_STACK_PEEK * 2 + VERTICAL_SPACING;
+
+var MINIMUM_SCREEN_WIDTH = MINIMUM_HORIZONTAL_SPACING * 8.0 + CARD_WIDTH * 7.0;
+var MINIMUM_SCREEN_HEIGHT = VERTICAL_SPACING * 2.0 + CARD_HEIGHT + STOCK_STACK_PEEK * 2.0 + TABLEAU_BOTTOM_STACK_PEEK * 6.0 + TABLEAU_TOP_STACK_PEEK * 13.0;
+
+var game = new Game(new GameSettings());
+
+var scale = 1.0;
+
+var halfHorizontalSpacing = 0.0;
+var foundationLeft = [ 0.0, 0.0, 0.0, 0.0 ];
+var tableauLeft = [ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 ];
+var tableauTopTop = [ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 ];
+
+var stockLeft = 0.0;
+var wasteLeft = 0.0;
+
+var animationDuration = 200;
+var doubleClickDownDuration = 200;
+var doubleClickUpDuration = 200;
+
+var drag = null;
+var clickRecord = null;
+var selected = null;
+
+var timer;
+
+var acceptingInput;
+
+function calculateLayout() {
+    
+    var body = $(document.getElementById("content"));
+    var w = body.width();
+    var h = body.height();
+    
+    var pixelsPerCardHeight = Math.min(w / MINIMUM_SCREEN_WIDTH, h / MINIMUM_SCREEN_HEIGHT);
+    
+    var screenWidth = w / pixelsPerCardHeight;
+    
+    var horizontalSpacing = (screenWidth - (CARD_WIDTH * 7.0)) * (1.0 / 8.0);
+    halfHorizontalSpacing = horizontalSpacing * 0.5;
+    
+    var left = horizontalSpacing;
+    for(var i = 0; i < tableauLeft.length; ++i) {
+        
+        tableauLeft[i] = left;
+        
+        left += CARD_WIDTH;
+        left += horizontalSpacing;
+        
+    }
+    
+    for(var i = 0; i < foundationLeft.length; ++i)
+        foundationLeft[i] = tableauLeft[i + 3];
+    
+    stockLeft = tableauLeft[0];
+    wasteLeft = tableauLeft[1];
+    
+    scale = pixelsPerCardHeight;
+    
+}
+
+function calculateTableauTopTops() {
+    
+    for(var i = 0; i < tableauTopTop.length; ++i)
+        tableauTopTop[i] = TABLEAU_BOTTOM_TOP + game.cardsByPile[TableauBottoms[i]].length * TABLEAU_BOTTOM_STACK_PEEK;
+    
+}
+
+function calculateCardPosition(card) {
+    
+    var pos = game.positionByCard[card];
+    var pile = pos.pile;
+    var type = pile.type;
+    var offset;
+    
+    switch(type) {
+    
+    case PileType.WASTE:
+        offset = Math.floor(pos.index / 8.0) * STOCK_STACK_PEEK;
+        return {
+            top: WASTE_TOP + offset,
+            left: wasteLeft + offset,
+            z: pos.index + 200,
+            faceUp: type.faceUp
+        };
+    
+    case PileType.STOCK:
+        offset = Math.floor(pos.index / 8.0) * STOCK_STACK_PEEK;
+        return {
+            top: STOCK_TOP + offset,
+            left: stockLeft + offset,
+            z: pos.index + 200,
+            faceUp: type.faceUp
+        };
+    
+    case PileType.FOUNDATION:
+        return {
+            top: FOUNDATION_TOP,
+            left: foundationLeft[pile.index],
+            z: pos.index + 200,
+            faceUp: type.faceUp
+        };
+    
+    case PileType.TABLEAU_BOTTOM:
+        return {
+            top: TABLEAU_BOTTOM_TOP + TABLEAU_BOTTOM_STACK_PEEK * pos.index,
+            left: tableauLeft[pile.index],
+            z: pos.index + 200,
+            faceUp: type.faceUp
+        };
+    
+    case PileType.TABLEAU_TOP:
+        return {
+            top: tableauTopTop[pile.index] + TABLEAU_TOP_STACK_PEEK * pos.index,
+            left: tableauLeft[pile.index],
+            z: pos.index + 300,
+            faceUp: type.faceUp
+        };
+    
+    }
+    
+}
+
+function calculatePointPile(x, y) {
+    
+    x /= scale;
+    y /= scale;
+    
+    // Figure column
+    var i;
+    for(i = 6; i >= 0; --i) {
+        
+        if(x >= (tableauLeft[i] - halfHorizontalSpacing))
+            break;
+        
+    }
+    
+    x = i;
+    
+    // Top
+    if(y < (TABLEAU_BOTTOM_TOP - HALF_VERTICAL_SPACING)) {
+        
+        if(x === 0)
+            return Pile.STOCK;
+        
+        if(x === 1)
+            return Pile.WASTE;
+        
+        if(x >= 3)
+            return Foundations[x - 3];
+        
+    }
+    
+    // Bottom
+    else {
+        
+        var tableauTop = TableauTops[x];
+        var tableauBottom = TableauBottoms[x];
+        
+        if(game.cardsByPile[tableauBottom].length === 0)
+            return tableauTop;
+        
+        if(game.cardsByPile[tableauTop].length === 0)
+            return tableauBottom;
+        
+        return tableauTop;
+        
+    }
+    
+    return null;
+    
+}
+
+function assertCardSizes(animate) {
+    
+    if(animate && animationDuration)
+        $(".cardSized").animate({
+            width: CARD_WIDTH * scale + "px",
+            height: CARD_HEIGHT * scale + "px"
+        }, { duration: animationDuration, queue: false });
+    
+    else
+        $(".cardSized").css({
+            width: CARD_WIDTH * scale + "px",
+            height: CARD_HEIGHT * scale + "px"
+        });
+    
+}
+
+function repositionDirtyCards(animate) {
+    
+    for(var card in game.recentlyMoved) {
+        
+        var element = $(document.getElementById(card));
+        var pos = calculateCardPosition(Card[card]);
+        
+        changeFaceUp(element, card, pos.faceUp, animate);
+        moveElement(element, pos, animate);
+        
+    }
+    
+    game.clearRecentlyMoved();
+    
+}
+
+function changeFaceUp(element, card, faceUp, animate) {
+    
+    if(faceUp) {
+        
+        if(!element.hasClass("faceUp") || !element.hasClass("setup")) {
+            
+            if(animate && animationDuration) {
+                
+                var fore = $(document.createElement("div")).addClass("back").appendTo(element);
+                
+                fore.animate(
+                    { "opacity": "0" },
+                    {
+                        duration: animationDuration,
+                        complete: function() { fore.remove(); }
+                    }
+                );
+                
+            }
+            
+            element.addClass("faceUp").css("background-image", "url(\"./cards4x/" + card + ".png\")");
+            
+        }
+        
+    }
+    
+    else {
+        
+        if(element.hasClass("faceUp") || !element.hasClass("setup")) {
+            
+            if(animate && animationDuration) {
+                
+                var fore = $(document.createElement("div")).css("background-image", element.css("background-image")).appendTo(element);
+                
+                fore.animate(
+                    { "opacity": "0" },
+                    {
+                        duration: animationDuration,
+                        complete: function() { fore.remove(); }
+                    }
+                );
+                
+            }
+            
+            element.removeClass("faceUp").css("background-image", "url(\"./back.png\")");
+            
+        }
+        
+    }
+    
+    element.addClass("setup");
+    
+}
+
+function moveElement(element, pos, animate) {
+    
+    var top = pos.top * scale;
+    var left = pos.left * scale;
+    
+    if(animate && animationDuration) {
+        
+        element.css("z-index", pos.z + 1000);
+        
+        element.animate({ top: top + "px", left: left + "px" }, { duration: animationDuration, queue: false, complete: function() {
+            element.css("z-index", pos.z);
+        } });
+        
+    }
+    
+    else
+        element.css({ "top": top + "px", "left": left + "px", "z-index": pos.z });
+    
+}
+
+function redoLayout(animate) {
+    
+    animate = def(animate, true);
+    
+    // Terminate any in-progress drags
+    drag = null;
+    
+    calculateLayout();
+    calculateTableauTopTops();
+    assertCardSizes(animate);
+    
+    game.recentlyMoved = Card;
+    repositionDirtyCards(false);
+    
+    var element;
+    var pos = {
+        top: STOCK_TOP,
+        left: stockLeft,
+        z: 0
+    };
+    
+    element = $(document.getElementById("STOCK"));
+    element.removeClass("recycle blocked");
+    element.addClass((game.settings.scoring === Scoring.VEGAS) ? "blocked" : "recycle");
+    moveElement(element, pos, animate);
+    
+    element = $(document.getElementById("buttons"));
+    pos.left = tableauLeft[2];
+    moveElement(element, pos, animate);
+    
+    pos.top = FOUNDATION_TOP;
+    
+    for(var i = 0; i < 4; ++i) {
+        
+        element = $(document.getElementById("FOUNDATION_" + i));
+        pos.left = foundationLeft[i];
+        moveElement(element, pos, animate);
+        
+    }
+    
+    pos.top = TABLEAU_BOTTOM_TOP;
+    
+    for(var i = 0; i < 7; ++i) {
+        
+        element = $(document.getElementById("TABLEAU_" + i));
+        pos.left = tableauLeft[i];
+        moveElement(element, pos, animate);
+        
+    }
+    
+}
+
+function updateScore() {
+    $(document.getElementById("score")).text(game.score);
+}
+
+function updateTime() {
+    $(document.getElementById("time")).text(game.time);
+}
+
+function onMove(move) {
+    
+    if(!move)
+        return;
+    
+    var undoButton = $(document.getElementById("undo"));
+    
+    if(game.canUndo()) {
+        undoButton.removeAttr("disabled");
+    } else {
+        undoButton.attr("disabled", "disabled");
+    }
+    
+    updateScore();
+    calculateTableauTopTops();
+    
+    cancelSelection();
+    resetClickRecord();
+    
+    if(!timer && game.time >= 0)
+        timer = setInterval(onSecond, 1000);
+    
+    if(game.won) {
+        onWon();
+    }
+    
+}
+
+function onSecond() {
+    
+    game.incrementTime();
+    
+    updateScore();
+    updateTime();
+    
+}
+
+function onWon() {
+    
+    if(!acceptingInput)
+        return;
+    
+    var text = "You won!<br>";
+    
+    if(game.settings.scoring !== Scoring.NONE)
+        text += "<br>Score: " + game.score;
+    
+    if(game.time >= 0)
+        text += "<br>Time: " + game.time;
+    
+    text += "<br><br>(Refresh the page to play again.)";
+    
+    var won = $(document.getElementById("won")).css({
+        display: "block",
+        opacity: 0
+    });
+    
+    var msg = $(document.createElement("div")).html(text).css({
+        position: "absolute"
+    }).appendTo(won);
+    
+    msg.css({
+        top: ((won.height() * 0.5) - (msg.height() * 0.5)) + "px",
+        left: ((won.width() * 0.5) - (msg.width() * 0.5)) + "px"
+    });
+    
+    if(animationDuration)
+        won.animate({ opacity: "100" }, { duration: animationDuration });
+    
+    else
+        won.css("opacity", "100");
+    
+    if(timer)
+        clearInterval(timer);
+    
+    acceptingInput = false;
+    
+}
+
+function select(pile) {
+    
+    cancelSelection();
+    
+    var cards = game.cardsByPile[pile];
+    
+    var i = (pile.type === PileType.TABLEAU_TOP) ? 0 : cards.length - 1;
+    
+    for(; i < cards.length; ++i)
+        selectElement($(document.getElementById(cards[i])));
+    
+    selected = pile;
+    
+}
+
+function selectElement(element) {
+    $(document.createElement("div")).addClass("selection").appendTo(element);
+}
+
+function cancelSelection() {
+    
+    $(".selection").remove();
+    selected = null;
+    
+}
+
+function getDragData(element, pointerX, pointerY) {
+    
+    var card = Card[element.attr("id")];
+    
+    if(typeof(card) === "undefined")
+        return;
+    
+    var position = game.positionByCard[card];
+    var pile = position.pile;
+    var type = pile.type;
+    
+    if(!type.faceUp)
+        return;
+    
+    var cards = game.cardsByPile[pile];
+    
+    if((type !== PileType.TABLEAU_TOP) && (position.index !== (cards.length - 1)))
+        return;
+    
+    game.recentlyMoved[card] = true;
+    
+    for(var i = position.index + 1; i < cards.length; ++i) {
+        
+        card = cards[i];
+        
+        element = element.add(document.getElementById(card));
+        game.recentlyMoved[card] = true;
+        
+    }
+    
+    var pos = element.position();
+    pos.top += (CARD_HEIGHT * scale) * 0.5;
+    pos.left += (CARD_WIDTH * scale) * 0.5;
+    
+    return {
+        pile: pile,
+        elements: element,
+        centerOffset: {
+            x: pos.left - pointerX,
+            y: pos.top - pointerY
+        }
+    };
+    
+}
+
+function resetClickRecord() {
+    clickRecord = null;
+}
+
+function onDragStart(target, pointerX, pointerY) {
+    
+    if(drag !== null)
+        return false;
+    
+    // If we grabbed a card's selection, grab the card instead
+    if(target.hasClass("selection") || target.hasClass("back"))
+        target = target.parent();
+    
+    var dragData = getDragData(target, pointerX, pointerY);
+    
+    if(!dragData) {
+        
+        dragData = { pile: calculatePointPile(pointerX, pointerY) };
+        
+        if(!dragData.pile)
+            return false;
+        
+    } else {
+        
+        // Bring the dragged element(s) to the front
+        dragData.elements.css("z-index", "+=1000");
+        
+    }
+    
+    // Grab pointer position
+    dragData.currentX = pointerX;
+    dragData.currentY = pointerY;
+    
+    drag = dragData;
+    
+    // Cancel text selections
+    document.body.focus();
+    
+    var pile = dragData.pile;
+    var type = pile.type;
+    
+    // Initiate click timeout
+    if(type !== PileType.FOUNDATION && type.faceUp) {
+        
+        if(clickRecord) {
+            
+            clearTimeout(clickRecord.timeout);
+            
+            if(clickRecord.pile !== pile)
+                clickRecord = {};
+            
+        }
+        
+        else
+            clickRecord = {};
+        
+        clickRecord.pile = pile;
+        clickRecord.timeout = setTimeout(resetClickRecord, doubleClickDownDuration);
+        
+    }
+    
+    return true;
+    
+}
+
+function onDragMove(pointerX, pointerY) {
+    
+    if(drag === null)
+        return;
+    
+    if(drag.elements) {
+        
+        var movement = {
+            top: "+=" + (pointerY - drag.currentY),
+            left: "+=" + (pointerX - drag.currentX)
+        };
+        
+        drag.elements.css(movement);
+        
+    }
+    
+    drag.currentY = pointerY;
+    drag.currentX = pointerX;
+    
+}
+
+function onPileClicked(pile) {
+    
+    if(pile === selected) {
+        cancelSelection();
+        return;
+    }
+    
+    switch(pile.type) {
+    
+    case PileType.WASTE:
+        select(Pile.WASTE);
+        return;
+    
+    case PileType.STOCK:
+        if(game.cardsByPile[Pile.STOCK].length === 0)
+            return onMove(game.move(Pile.WASTE, Pile.STOCK));
+        else
+            return onMove(game.move(Pile.STOCK, Pile.WASTE));
+    
+    case PileType.TABLEAU_BOTTOM:
+        return onMove(game.move(pile, TableauTops[pile.index]));
+    
+    case PileType.FOUNDATION:
+    case PileType.TABLEAU_TOP:
+        if(selected) {
+            
+            var move = game.move(selected, pile);
+            
+            if(!move)
+                select(pile);
+            
+            else
+                onMove(move);
+            
+        } else
+            select(pile);
+    
+    }
+    
+}
+
+function onDragEnd() {
+    
+    if(!drag) {
+        
+        cancelSelection();
+        return;
+        
+    }
+    
+    try {
+        
+        // Use card center if applicable
+        var centerOffset = drag.centerOffset;
+        if(centerOffset) {
+            
+            drag.currentX += centerOffset.x;
+            drag.currentY += centerOffset.y;
+            
+        }
+        
+        var endPile = calculatePointPile(drag.currentX, drag.currentY);
+        
+        // If this drag ended where it started (click)
+        if(drag.pile === endPile) {
+            
+            // Check for double-click
+            if(clickRecord) {
+                
+                clearTimeout(clickRecord.timeout);
+                
+                // First click
+                if(!clickRecord.clickedOnce) {
+                    
+                    clickRecord.clickedOnce = true;
+                    clickRecord.timeout = setTimeout(resetClickRecord, doubleClickUpDuration);
+                    
+                }
+                
+                // Second click
+                else {
+                    
+                    var move = game.autoFoundation(endPile);
+                    
+                    if(move) {
+                        
+                        onMove(move);
+                        return;
+                        
+                    }
+                    
+                }
+                
+            }
+            
+            onPileClicked(endPile);
+            return;
+            
+        }
+        
+        // This was a drag from one region to another, not a click
+        clickRecord = null;
+        cancelSelection();
+        
+        // If this drag wasn't dragging anything, or the drag ended nowhere
+        if(!drag.elements || !endPile)
+            return;
+        
+        // Move source to destination, if possible
+        onMove(game.move(drag.pile, endPile));
+        
+    } finally {
+        
+        // Reposition any dragged/moved elements
+        repositionDirtyCards(true);
+        
+        drag = null;
+        
+    }
+    
+}
+
+function onMouseDown(e) {
+    
+    if(!acceptingInput)
+        return;
+    
+    if(e.which !== 1)
+        return;
+    
+    if(!onDragStart($(e.target), e.pageX, e.pageY))
+        return;
+    
+    $(document).mousemove(onMouseMove);
+    
+    return false;
+    
+}
+
+function onTouchDown(e) {
+    
+    if(!acceptingInput)
+        return;
+    
+    var evt = e.originalEvent;
+    
+    var touch = evt.changedTouches[0];
+    
+    if(!onDragStart($(touch.target), touch.pageX, touch.pageY))
+        return;
+    
+    $(document).bind("touchmove", onTouchMove);
+    
+    evt.preventDefault();
+    return false;
+    
+}
+
+function onMouseMove(e) {
+    
+    if(!acceptingInput)
+        return;
+    
+    onDragMove(e.pageX, e.pageY);
+    
+}
+
+function onTouchMove(e) {
+    
+    if(!acceptingInput)
+        return;
+    
+    var evt = e.originalEvent;
+    
+    var touch = evt.changedTouches[0];
+    
+    onDragMove(touch.pageX, touch.pageY);
+    
+    evt.preventDefault();
+    return false;
+    
+}
+
+function onMouseUp(e) {
+    
+    if(!acceptingInput)
+        return;
+    
+    $(document).unbind("mousemove");
+    onDragEnd();
+    
+}
+
+function onTouchUp(e) {
+    
+    if(!acceptingInput)
+        return;
+    
+    var evt = e.originalEvent;
+    
+    var touch = evt.changedTouches[0];
+    
+    $(document).unbind("touchmove");
+    onDragEnd();
+    
+}
+
+function setupPage() {
+    
+    var content = $(document.getElementById("content"));
+    var element;
+    
+    for(var i = 0; i < Cards.length; ++i) {
+        
+        var card = Cards[i];
+        element = $(document.createElement("div"));
+        
+        element.addClass("cardSized");
+        element.attr("id", card);
+        
+        content.append(element);
+        
+    }
+    
+    for(var i = 0; i < 7; ++i) {
+        
+        element = $(document.createElement("div"));
+        
+        element.addClass("cardSized emptyStack");
+        element.attr("id", "TABLEAU_" + i);
+        
+        content.append(element);
+        
+    }
+    
+    for(var i = 0; i < 4; ++i) {
+        
+        element = $(document.createElement("div"));
+        
+        element.addClass("cardSized emptyStack");
+        element.attr("id", "FOUNDATION_" + i);
+        
+        content.append(element);
+        
+    }
+    
+    element = $(document.createElement("div"));
+    
+    element.addClass("cardSized");
+    element.attr("id", "STOCK");
+    
+    content.append(element);
+    
+    redoLayout(false);
+    
+}
+
+$(function() {
+    
+    acceptingInput = true;
+    
+    setupPage();
+    $(window).resize(redoLayout);
+    
+    $(document).mousedown(onMouseDown).mouseup(onMouseUp);
+    
+    $(document).bind("touchstart", onTouchDown).bind("touchend", onTouchUp);
+    
+    updateScore();
+    updateTime();
+    
+    $(document.getElementById("undo")).click(function() {
+        
+        if(!acceptingInput)
+            return;
+        
+        onMove(game.undo());
+        repositionDirtyCards(true);
+        
+    }).attr("disabled", "disabled");
+    
+    $(document.getElementById("allup")).click(function() {
+        
+        if(!acceptingInput)
+            return;
+        
+        var moves = game.autoFoundations();
+        
+        for(var i = 0; i < moves.length; ++i)
+            onMove(moves[i]);
+        
+        repositionDirtyCards(true);
+        
+    });
+    
+});
+
+//--></script>
+</body>
+</html>
